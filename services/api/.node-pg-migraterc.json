@@ -1,0 +1,8 @@
+{
+    "migrations-dir": "migrations",
+    "migrations-table": "pgmigrations",
+    "database-url-var": "DATABASE_URL"
+  }
+
+//   Why this matters: Application aur migration tool dono same database ko use karenge.
+//    pgmigrations table migration history track karegi, jisse already executed migration dobara run nahi hogi.

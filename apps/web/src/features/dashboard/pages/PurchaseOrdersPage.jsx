@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+
+import { useEffect, useMemo, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
 import {
   ClipboardList,
@@ -10,145 +11,224 @@ import {
   Eye,
   X,
   Package,
+  Trash2,
 } from "lucide-react";
 
 import StatCard from "../pages/components/StatCard";
-
-const initialPurchaseOrders = [
-  {
-    id: 1,
-    poNumber: "PO-2026-001",
-    supplier: "FashionHub Textiles",
-    items: 4,
-    orderDate: "2026-10-20",
-    expectedDelivery: "2026-11-08",
-    amount: 145000,
-    status: "Pending",
-    notes: "Cotton and apparel replenishment.",
-    products: [
-      { name: "Classic Cotton T-Shirt", quantity: 100, unitPrice: 899 },
-      { name: "Premium Hoodie", quantity: 20, unitPrice: 2199 },
-    ],
-  },
-  {
-    id: 2,
-    poNumber: "PO-2026-002",
-    supplier: "Denim Works",
-    items: 2,
-    orderDate: "2026-10-18",
-    expectedDelivery: "2026-11-05",
-    amount: 98000,
-    status: "Approved",
-    notes: "Seasonal denim restock.",
-    products: [
-      { name: "Slim Fit Denim Jeans", quantity: 40, unitPrice: 1899 },
-    ],
-  },
-  {
-    id: 3,
-    poNumber: "PO-2026-003",
-    supplier: "Urban Accessories Co.",
-    items: 3,
-    orderDate: "2026-10-15",
-    expectedDelivery: "2026-10-30",
-    amount: 76500,
-    status: "Received",
-    notes: "Accessories replenishment.",
-    products: [
-      { name: "Leather Crossbody Bag", quantity: 20, unitPrice: 2499 },
-      { name: "Sports Water Bottle", quantity: 30, unitPrice: 499 },
-    ],
-  },
-  {
-    id: 4,
-    poNumber: "PO-2026-004",
-    supplier: "StepUp Footwear",
-    items: 2,
-    orderDate: "2026-10-24",
-    expectedDelivery: "2026-11-12",
-    amount: 212000,
-    status: "Pending",
-    notes: "Footwear replenishment.",
-    products: [
-      { name: "Running Sneakers", quantity: 40, unitPrice: 3299 },
-    ],
-  },
-  {
-    id: 5,
-    poNumber: "PO-2026-005",
-    supplier: "Premium Apparel Ltd.",
-    items: 5,
-    orderDate: "2026-10-10",
-    expectedDelivery: "2026-10-28",
-    amount: 186000,
-    status: "Approved",
-    notes: "Monthly apparel order.",
-    products: [
-      { name: "Linen Casual Shirt", quantity: 80, unitPrice: 1499 },
-    ],
-  },
-];
+import {
+  getPurchaseOrders,
+  createPurchaseOrder,
+} from "../../../services/purchaseOrderService";
+import { getInventory } from "../../../services/inventoryService";
 
 const formatCurrency = (amount) =>
-  `₹${Number(amount).toLocaleString("en-IN")}`;
+  `₹${Number(amount || 0).toLocaleString("en-IN", {
+    maximumFractionDigits: 2,
+  })}`;
 
-const formatDate = (date) =>
-  new Date(`${date}T00:00:00`).toLocaleDateString("en-IN", {
+const formatDate = (date) => {
+  if (!date) return "—";
+
+  const parsedDate = new Date(`${String(date).slice(0, 10)}T00:00:00`);
+
+  if (Number.isNaN(parsedDate.getTime())) return "—";
+
+  return parsedDate.toLocaleDateString("en-IN", {
     day: "2-digit",
     month: "short",
     year: "numeric",
   });
+};
+
+// Converts the backend purchase order response into the UI format.
+const mapPurchaseOrder = (order) => {
+  const products = (order.items || []).map((item) => ({
+    id: item.id,
+    productId: item.productId,
+    name: item.productName,
+    sku: item.sku,
+    quantity: Number(item.quantity),
+    receivedQuantity: Number(item.receivedQuantity || 0),
+    unitPrice: Number(item.unitCost),
+  }));
+
+  const amount = products.reduce(
+    (total, product) =>
+      total + product.quantity * product.unitPrice,
+    0
+  );
+
+  return {
+    id: order.id,
+    poNumber: `PO-${String(order.id).slice(0, 8).toUpperCase()}`,
+    supplier: order.supplierName,
+    items: products.length,
+    orderDate: order.createdAt,
+    expectedDelivery: order.expectedDate,
+    amount,
+    status: order.status,
+    products,
+    notes: "",
+  };
+};
 
 function PurchaseOrderStatus({ value }) {
-  const statusClass = value.toLowerCase().replaceAll(" ", "-");
+  const statusClass = String(value || "pending")
+    .toLowerCase()
+    .replaceAll(" ", "-");
 
   return (
     <span className={`po-status po-status-${statusClass}`}>
-      {value}
+      {value || "Pending"}
     </span>
   );
 }
 
-function PurchaseOrderModal({ order, onClose, onSave }) {
+function PurchaseOrderModal({
+  order,
+  inventory = [],
+  onClose,
+  onSave,
+  saving = false,
+}) {
   const isView = Boolean(order);
 
   const [form, setForm] = useState({
     supplier: "",
     expectedDelivery: "",
-    notes: "",
-    amount: "",
   });
+
+  const [items, setItems] = useState([
+    {
+      productId: "",
+      quantity: 1,
+      unitCost: "",
+    },
+  ]);
 
   const [error, setError] = useState("");
 
   const updateField = (event) => {
     const { name, value } = event.target;
-    setForm((current) => ({ ...current, [name]: value }));
+
+    setForm((current) => ({
+      ...current,
+      [name]: value,
+    }));
   };
 
-  const handleSubmit = (event) => {
+  const updateItem = (index, field, value) => {
+    setItems((current) =>
+      current.map((item, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...item,
+              [field]: value,
+            }
+          : item
+      )
+    );
+  };
+
+  const handleProductChange = (index, productId) => {
+    const selectedProduct = inventory.find(
+      (product) => product.id === productId
+    );
+
+    setItems((current) =>
+      current.map((item, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...item,
+              productId,
+              unitCost: selectedProduct
+                ? String(selectedProduct.unitPrice ?? 0)
+                : "",
+            }
+          : item
+      )
+    );
+  };
+
+  const addItem = () => {
+    setItems((current) => [
+      ...current,
+      {
+        productId: "",
+        quantity: 1,
+        unitCost: "",
+      },
+    ]);
+  };
+
+  const removeItem = (index) => {
+    setItems((current) =>
+      current.filter((_, itemIndex) => itemIndex !== index)
+    );
+  };
+
+  const totalAmount = items.reduce((total, item) => {
+    return (
+      total +
+      Number(item.quantity || 0) * Number(item.unitCost || 0)
+    );
+  }, 0);
+
+  const handleSubmit = async (event) => {
     event.preventDefault();
+    setError("");
 
-    if (
-      !form.supplier.trim() ||
-      !form.expectedDelivery ||
-      !form.amount
-    ) {
-      setError("Please complete all required fields.");
+    if (!form.supplier.trim()) {
+      setError("Please enter a supplier name.");
       return;
     }
 
-    if (!Number.isFinite(Number(form.amount)) || Number(form.amount) <= 0) {
-      setError("Please enter a valid order amount.");
+    if (!form.expectedDelivery) {
+      setError("Please select an expected delivery date.");
       return;
     }
 
-    onSave({
-      supplier: form.supplier.trim(),
-      expectedDelivery: form.expectedDelivery,
-      notes: form.notes.trim(),
-      amount: Number(form.amount),
-    });
+    if (!items.length) {
+      setError("Please add at least one product.");
+      return;
+    }
+
+    const invalidItem = items.find(
+      (item) =>
+        !item.productId ||
+        !Number.isInteger(Number(item.quantity)) ||
+        Number(item.quantity) <= 0 ||
+        !Number.isFinite(Number(item.unitCost)) ||
+        Number(item.unitCost) < 0
+    );
+
+    if (invalidItem) {
+      setError(
+        "Please select a product and enter a valid quantity and unit cost for every item."
+      );
+      return;
+    }
+
+    const productIds = items.map((item) => item.productId);
+
+    if (new Set(productIds).size !== productIds.length) {
+      setError("A product can only be added once to a purchase order.");
+      return;
+    }
+
+    try {
+      await onSave({
+        supplierName: form.supplier.trim(),
+        expectedDate: form.expectedDelivery,
+        items: items.map((item) => ({
+          productId: item.productId,
+          quantity: Number(item.quantity),
+          unitCost: Number(item.unitCost),
+        })),
+      });
+    } catch (err) {
+      setError(err.message || "Failed to create purchase order.");
+    }
   };
 
   return (
@@ -163,12 +243,14 @@ function PurchaseOrderModal({ order, onClose, onSave }) {
         <div className="po-modal-header">
           <div>
             <h3 id="po-modal-title">
-              {isView ? "Purchase Order Details" : "Create Purchase Order"}
+              {isView
+                ? "Purchase Order Details"
+                : "Create Purchase Order"}
             </h3>
             <p>
               {isView
                 ? "Review supplier and order information."
-                : "Enter the details for your new purchase order."}
+                : "Add supplier details and products to your order."}
             </p>
           </div>
 
@@ -188,10 +270,12 @@ function PurchaseOrderModal({ order, onClose, onSave }) {
               <div className="po-detail-icon">
                 <Package size={21} />
               </div>
+
               <div>
                 <strong>{order.poNumber}</strong>
                 <span>{order.supplier}</span>
               </div>
+
               <PurchaseOrderStatus value={order.status} />
             </div>
 
@@ -200,14 +284,17 @@ function PurchaseOrderModal({ order, onClose, onSave }) {
                 <span>Order Date</span>
                 <strong>{formatDate(order.orderDate)}</strong>
               </div>
+
               <div>
                 <span>Expected Delivery</span>
                 <strong>{formatDate(order.expectedDelivery)}</strong>
               </div>
+
               <div>
                 <span>Items</span>
                 <strong>{order.items}</strong>
               </div>
+
               <div>
                 <span>Total Amount</span>
                 <strong>{formatCurrency(order.amount)}</strong>
@@ -215,16 +302,27 @@ function PurchaseOrderModal({ order, onClose, onSave }) {
             </div>
 
             <div className="po-products-list">
-              <h4>Order Information</h4>
-              <p>{order.notes || "No additional notes."}</p>
-              {order.products?.map((product, index) => (
-                <div className="po-product-row" key={index}>
-                  <span>{product.name}</span>
-                  <strong>
-                    {product.quantity} × {formatCurrency(product.unitPrice)}
-                  </strong>
-                </div>
-              ))}
+              <h4>Order Products</h4>
+
+              {order.products?.length ? (
+                order.products.map((product, index) => (
+                  <div className="po-product-row" key={product.id || index}>
+                    <div>
+                      <span>{product.name}</span>
+                      {product.sku && (
+                        <small>{product.sku}</small>
+                      )}
+                    </div>
+
+                    <strong>
+                      {product.quantity} ×{" "}
+                      {formatCurrency(product.unitPrice)}
+                    </strong>
+                  </div>
+                ))
+              ) : (
+                <p>No products found for this order.</p>
+              )}
             </div>
 
             <div className="po-modal-actions">
@@ -248,55 +346,173 @@ function PurchaseOrderModal({ order, onClose, onSave }) {
                   onChange={updateField}
                   placeholder="e.g. FashionHub Textiles"
                   autoFocus
-                />
-              </label>
-
-              <label className="inventory-form-field">
-                Expected Delivery *
-                <input
-                  type="date"
-                  name="expectedDelivery"
-                  value={form.expectedDelivery}
-                  onChange={updateField}
-                />
-              </label>
-
-              <label className="inventory-form-field">
-                Total Amount (₹) *
-                <input
-                  type="number"
-                  min="1"
-                  name="amount"
-                  value={form.amount}
-                  onChange={updateField}
-                  placeholder="e.g. 50000"
+                  maxLength={255}
                 />
               </label>
 
               <label className="inventory-form-field po-form-full">
-                Notes
-                <textarea
-                  name="notes"
-                  value={form.notes}
-                  onChange={updateField}
-                  placeholder="Add order details..."
-                  rows={3}
-                />
+                Expected Delivery *
+                <input
+  type="date"
+  name="expectedDelivery"
+  value={form.expectedDelivery}
+  onChange={updateField}
+  min={new Date().toISOString().slice(0, 10)}
+  onClick={(event) => {
+    if (event.currentTarget.showPicker) {
+      event.currentTarget.showPicker();
+    }
+  }}
+  required
+/>
               </label>
             </div>
 
-            {error && <p className="inventory-form-error">{error}</p>}
+            <div className="po-products-list">
+              <div className="po-modal-header">
+                <div>
+                  <h4>Products</h4>
+                  <p>Select products from your inventory.</p>
+                </div>
+
+                <button
+                  type="button"
+                  className="inventory-add-button"
+                  onClick={addItem}
+                  disabled={inventory.length === 0}
+                >
+                  <Plus size={14} /> Add Product
+                </button>
+              </div>
+
+              {inventory.length === 0 && (
+                <p className="inventory-form-error">
+                  No inventory products are available. Add products to
+                  inventory before creating a purchase order.
+                </p>
+              )}
+
+              {items.map((item, index) => {
+                const selectedProduct = inventory.find(
+                  (product) => product.id === item.productId
+                );
+
+                return (
+                  <div className="po-product-row" key={index}>
+                    <div className="po-form-grid">
+                      <label className="inventory-form-field po-form-full">
+                        Product *
+                        <select
+                          value={item.productId}
+                          onChange={(event) =>
+                            handleProductChange(index, event.target.value)
+                          }
+                        >
+                          <option value="">Select a product</option>
+
+                          {inventory.map((product) => {
+                            const alreadySelected = items.some(
+                              (otherItem, otherIndex) =>
+                                otherIndex !== index &&
+                                otherItem.productId === product.id
+                            );
+
+                            return (
+                              <option
+                                key={product.id}
+                                value={product.id}
+                                disabled={alreadySelected}
+                              >
+                                {product.productName} ({product.sku})
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </label>
+
+                      {selectedProduct && (
+                        <p className="inventory-result-count">
+                          Available stock:{" "}
+                          {selectedProduct.availableStock}
+                        </p>
+                      )}
+
+                      <label className="inventory-form-field">
+                        Quantity *
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={item.quantity}
+                          onChange={(event) =>
+                            updateItem(index, "quantity", event.target.value)
+                          }
+                        />
+                      </label>
+
+                      <label className="inventory-form-field">
+                        Unit Cost (₹) *
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={item.unitCost}
+                          onChange={(event) =>
+                            updateItem(index, "unitCost", event.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    {items.length > 1 && (
+                      <button
+                        type="button"
+                        className="po-close-button"
+                        onClick={() => removeItem(index)}
+                        title="Remove product"
+                        aria-label="Remove product"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="po-details-grid">
+              <div>
+                <span>Total Products</span>
+                <strong>{items.length}</strong>
+              </div>
+
+              <div>
+                <span>Total Order Amount</span>
+                <strong>{formatCurrency(totalAmount)}</strong>
+              </div>
+            </div>
+
+            {error && (
+              <p className="inventory-form-error">{error}</p>
+            )}
 
             <div className="po-modal-actions">
               <button
                 type="button"
                 className="inventory-secondary-button"
                 onClick={onClose}
+                disabled={saving}
               >
                 Cancel
               </button>
-              <button type="submit" className="inventory-primary-button">
-                <Plus size={15} /> Create Purchase Order
+
+              <button
+                type="submit"
+                className="inventory-add-button"
+                disabled={saving || inventory.length === 0}
+              >
+                <Plus size={15} />
+                {saving ? "Creating..." : "Create Purchase Order"}
               </button>
             </div>
           </form>
@@ -306,11 +522,16 @@ function PurchaseOrderModal({ order, onClose, onSave }) {
   );
 }
 
-function PurchaseOrdersTable({ orders, setOrders }) {
+function PurchaseOrdersTable({
+  orders,
+  inventory,
+  onOrderCreated,
+}) {
   const [searchText, setSearchText] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("All");
   const [modalOrder, setModalOrder] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
 
   const showToast = (message) => {
@@ -329,7 +550,9 @@ function PurchaseOrdersTable({ orders, setOrders }) {
           order.supplier,
           order.status,
           order.amount,
-        ].some((value) => String(value).toLowerCase().includes(query));
+        ].some((value) =>
+          String(value ?? "").toLowerCase().includes(query)
+        );
 
       const matchesStatus =
         selectedStatus === "All" || order.status === selectedStatus;
@@ -338,31 +561,21 @@ function PurchaseOrdersTable({ orders, setOrders }) {
     });
   }, [orders, searchText, selectedStatus]);
 
-  const createOrder = (orderData) => {
-    const nextId = Math.max(0, ...orders.map((order) => order.id)) + 1;
+  const createOrder = async (orderData) => {
+    setSaving(true);
 
-    const newOrder = {
-      ...orderData,
-      id: nextId,
-      poNumber: `PO-2026-${String(nextId).padStart(3, "0")}`,
-      items: 0,
-      orderDate: new Date().toISOString().slice(0, 10),
-      status: "Pending",
-      products: [],
-    };
+    try {
+      const createdOrder = await createPurchaseOrder(orderData);
 
-    setOrders((current) => [newOrder, ...current]);
-    setShowCreateModal(false);
-    showToast("Purchase order created successfully.");
-  };
+      if (createdOrder) {
+        onOrderCreated(mapPurchaseOrder(createdOrder));
+      }
 
-  const updateStatus = (order, status) => {
-    setOrders((current) =>
-      current.map((item) =>
-        item.id === order.id ? { ...item, status } : item
-      )
-    );
-    showToast(`${order.poNumber} marked as ${status}.`);
+      setShowCreateModal(false);
+      showToast("Purchase order created successfully.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const columnDefs = useMemo(
@@ -405,13 +618,13 @@ function PurchaseOrdersTable({ orders, setOrders }) {
       {
         field: "status",
         headerName: "Status",
-        minWidth: 125,
+        minWidth: 145,
         cellRenderer: PurchaseOrderStatus,
       },
       {
         headerName: "Actions",
-        minWidth: 145,
-        maxWidth: 160,
+        minWidth: 90,
+        maxWidth: 110,
         sortable: false,
         filter: false,
         floatingFilter: false,
@@ -424,19 +637,6 @@ function PurchaseOrdersTable({ orders, setOrders }) {
             >
               <Eye size={15} />
             </button>
-            <select
-              className="po-row-status-select"
-              aria-label={`Update ${params.data.poNumber} status`}
-              value={params.data.status}
-              onChange={(event) =>
-                params.context.onStatusChange(params.data, event.target.value)
-              }
-            >
-              <option value="Pending">Pending</option>
-              <option value="Approved">Approved</option>
-              <option value="Received">Received</option>
-              <option value="Cancelled">Cancelled</option>
-            </select>
           </div>
         ),
       },
@@ -457,9 +657,8 @@ function PurchaseOrdersTable({ orders, setOrders }) {
   const context = useMemo(
     () => ({
       onView: (order) => setModalOrder(order),
-      onStatusChange: updateStatus,
     }),
-    [orders]
+    []
   );
 
   return (
@@ -467,12 +666,14 @@ function PurchaseOrdersTable({ orders, setOrders }) {
       <div className="inventory-toolbar">
         <div className="inventory-search">
           <Search size={15} />
+
           <input
             type="search"
             placeholder="Search PO number, supplier..."
             value={searchText}
             onChange={(event) => setSearchText(event.target.value)}
           />
+
           {searchText && (
             <button
               type="button"
@@ -491,6 +692,7 @@ function PurchaseOrdersTable({ orders, setOrders }) {
           <option value="All">All Statuses</option>
           <option value="Pending">Pending</option>
           <option value="Approved">Approved</option>
+          <option value="Partially Received">Partially Received</option>
           <option value="Received">Received</option>
           <option value="Cancelled">Cancelled</option>
         </select>
@@ -533,6 +735,8 @@ function PurchaseOrdersTable({ orders, setOrders }) {
 
       {showCreateModal && (
         <PurchaseOrderModal
+          inventory={inventory}
+          saving={saving}
           onClose={() => setShowCreateModal(false)}
           onSave={createOrder}
         />
@@ -548,12 +752,61 @@ function PurchaseOrdersTable({ orders, setOrders }) {
 }
 
 export default function PurchaseOrdersPage() {
-  const [orders, setOrders] = useState(initialPurchaseOrders);
+  const [orders, setOrders] = useState([]);
+  const [inventory, setInventory] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const loadPageData = async () => {
+      try {
+        setLoading(true);
+        setError("");
+
+        const [purchaseOrders, products] = await Promise.all([
+          getPurchaseOrders(controller.signal),
+          getInventory(controller.signal),
+        ]);
+
+        if (controller.signal.aborted) return;
+
+        setOrders(purchaseOrders.map(mapPurchaseOrder));
+        setInventory(products);
+      } catch (err) {
+        if (
+          err.name !== "AbortError" &&
+          !controller.signal.aborted
+        ) {
+          setError(
+            err.message || "Failed to load purchase orders."
+          );
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadPageData();
+
+    return () => controller.abort();
+  }, []);
 
   const stats = useMemo(() => {
-    const pending = orders.filter((order) => order.status === "Pending").length;
-    const approved = orders.filter((order) => order.status === "Approved").length;
-    const received = orders.filter((order) => order.status === "Received").length;
+    const pending = orders.filter(
+      (order) => order.status === "Pending"
+    ).length;
+
+    const approved = orders.filter(
+      (order) => order.status === "Approved"
+    ).length;
+
+    const received = orders.filter(
+      (order) => order.status === "Received"
+    ).length;
 
     return [
       {
@@ -587,6 +840,10 @@ export default function PurchaseOrdersPage() {
     ];
   }, [orders]);
 
+  const handleOrderCreated = (newOrder) => {
+    setOrders((current) => [newOrder, ...current]);
+  };
+
   return (
     <div className="dashboard-overview">
       <div className="overview-heading">
@@ -596,7 +853,8 @@ export default function PurchaseOrdersPage() {
             Manage supplier orders, track approvals, and monitor incoming stock.
           </p>
         </div>
-        <span className="demo-data-label">DEMO DATA</span>
+
+        <span className="demo-data-label">LIVE DATA</span>
       </div>
 
       <div className="dashboard-stats-grid">
@@ -613,7 +871,19 @@ export default function PurchaseOrdersPage() {
           </div>
         </div>
 
-        <PurchaseOrdersTable orders={orders} setOrders={setOrders} />
+        {loading ? (
+          <p className="inventory-empty-state">
+            Loading purchase orders...
+          </p>
+        ) : error ? (
+          <p className="inventory-form-error">{error}</p>
+        ) : (
+          <PurchaseOrdersTable
+            orders={orders}
+            inventory={inventory}
+            onOrderCreated={handleOrderCreated}
+          />
+        )}
       </section>
     </div>
   );

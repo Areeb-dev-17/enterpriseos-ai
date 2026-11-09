@@ -308,6 +308,7 @@
     cursor: pointer;
   }
   
+  
   .search-shortcut {
     display: flex;
     align-items: center;
@@ -363,7 +364,7 @@
     border-radius: 50%;
   }
   
-  .topbar-profile {
+  /* .topbar-profile {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -374,7 +375,7 @@
     border: none;
     cursor: pointer;
   }
-  
+   */
   .profile-avatar {
     display: grid;
     place-items: center;
@@ -419,6 +420,133 @@
   .topbar-profile > svg {
     color: var(--dashboard-muted);
   }
+
+
+/* Profile menu */
+.profile-menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.topbar-profile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  color: var(--dashboard-text);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+}
+
+.topbar-profile:hover,
+.topbar-profile.active {
+  opacity: 0.8;
+}
+
+.profile-dropdown {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: -32px;
+  z-index: 1000;
+  width: 230px;
+  padding: 8px;
+  background: #181818;
+  border: 1px solid #303030;
+  border-radius: 10px;
+  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.45);
+  animation: profile-dropdown-in 0.16s ease-out;
+}
+
+@keyframes profile-dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.profile-dropdown-header {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px;
+}
+
+.profile-dropdown-name {
+  color: var(--dashboard-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.profile-dropdown-email {
+  overflow: hidden;
+  color: var(--dashboard-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-dropdown-divider {
+  height: 1px;
+  margin: 5px 0;
+  background: #303030;
+}
+
+.profile-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  color: var(--dashboard-text);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.profile-dropdown-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.profile-dropdown-item:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.logout-item {
+  color: #ef7777;
+}
+
+.logout-item:hover:not(:disabled) {
+  color: #ff9292;
+  background: rgba(239, 119, 119, 0.08);
+}
+
+.logout-item svg {
+  flex-shrink: 0;
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+  .profile-dropdown {
+    top: calc(100% + 12px);
+    right: 0;
+    width: 215px;
+  }
+}
+
   
   /* ========================================
      PAGE CONTENT
@@ -1153,7 +1281,6 @@
 }
 
 .inventory-status {
-  display: inline-flex;
   align-items: center;
 
   padding: 5px 9px;
@@ -1617,6 +1744,17 @@
   color: #d4d4d4;
   background: #222;
   border: 1px solid #3a3a3a;
+  display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border-radius: 7px;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    min-height: 36px;
+    padding: 0 14px;
 }
 
 .inventory-secondary-button:hover {
@@ -2284,7 +2422,6 @@
 /* Purchase Orders status badges */
 
 .po-status {
-  display: inline-flex;
   align-items: center;
   padding: 5px 10px;
   border-radius: 20px;
@@ -4007,3 +4144,4 @@
     padding: 18px;
   }
 }
+

@@ -1,11 +1,15 @@
 
-import { useLocation } from "react-router-dom";
+import { useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Search,
   Bell,
   ChevronDown,
   Command,
+  LogOut,
 } from "lucide-react";
+
+import { logOut } from "../../../auth/services/authService";
 
 const pageTitles = {
   "/dashboard": {
@@ -40,6 +44,10 @@ const pageTitles = {
 
 export default function DashboardTopbar() {
   const location = useLocation();
+  const navigate = useNavigate();
+
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const page =
     pageTitles[location.pathname] ?? pageTitles["/dashboard"];
@@ -55,6 +63,7 @@ export default function DashboardTopbar() {
   }
 
   const userName = user?.name || "User";
+
   const initials = userName
     .split(" ")
     .filter(Boolean)
@@ -62,6 +71,27 @@ export default function DashboardTopbar() {
     .join("")
     .slice(0, 2)
     .toUpperCase();
+
+  const handleLogout = async () => {
+    if (isLoggingOut) return;
+
+    setIsLoggingOut(true);
+
+    try {
+      await logOut();
+    } catch (error) {
+      console.error("Logout request failed:", error);
+    } finally {
+      localStorage.removeItem("accessToken");
+      localStorage.removeItem("user");
+      localStorage.removeItem("organization");
+
+      setIsProfileOpen(false);
+      setIsLoggingOut(false);
+
+      navigate("/login", { replace: true });
+    }
+  };
 
   return (
     <header className="dashboard-topbar">
@@ -95,23 +125,60 @@ export default function DashboardTopbar() {
           <span className="notification-indicator" />
         </button>
 
-        <button
-          type="button"
-          className="topbar-profile"
-          aria-label="User profile"
-          title={userName}
-        >
-          <span className="profile-avatar">{initials}</span>
+        <div className="profile-menu">
+          <button
+            type="button"
+            className={`topbar-profile ${
+              isProfileOpen ? "active" : ""
+            }`}
+            aria-label="User profile"
+            aria-expanded={isProfileOpen}
+            title={userName}
+            onClick={() =>
+              setIsProfileOpen((previous) => !previous)
+            }
+          >
+            <span className="profile-avatar">{initials}</span>
 
-          <span className="profile-details">
-            <span className="profile-name">{userName}</span>
-            <span className="profile-role">
-              {user?.role || "Workspace Member"}
+            <span className="profile-details">
+              <span className="profile-name">{userName}</span>
+              <span className="profile-role">
+                {user?.role || "Workspace Member"}
+              </span>
             </span>
-          </span>
 
-          <ChevronDown size={16} />
-        </button>
+            <ChevronDown size={16} />
+          </button>
+
+          {isProfileOpen && (
+            <div className="profile-dropdown">
+              <div className="profile-dropdown-header">
+                <span className="profile-dropdown-name">
+                  {userName}
+                </span>
+
+                <span className="profile-dropdown-email">
+                  {user?.email || ""}
+                </span>
+              </div>
+
+              <div className="profile-dropdown-divider" />
+
+              <button
+                type="button"
+                className="profile-dropdown-item logout-item"
+                onClick={handleLogout}
+                disabled={isLoggingOut}
+              >
+                <LogOut size={16} />
+
+                <span>
+                  {isLoggingOut ? "Logging out..." : "Log out"}
+                </span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </header>
   );

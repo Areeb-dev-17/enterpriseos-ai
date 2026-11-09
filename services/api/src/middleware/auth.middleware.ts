@@ -3,13 +3,13 @@ import jwt from "jsonwebtoken";
 import type { TokenPayload } from "../utils/token.js";
 import "../config/env.js";
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: TokenPayload;
-    }
-  }
-}
+// declare global {
+//   namespace Express {
+//     interface Request {
+//       user?: TokenPayload;
+//     }
+//   }
+// }
 
 const JWT_SECRET = process.env.JWT_SECRET;
 

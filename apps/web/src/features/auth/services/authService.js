@@ -1,9 +1,10 @@
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
-const authRequest = async (endpoint, payload) => {
+const authRequest = async (endpoint, payload = {}) => {
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
     },
@@ -25,4 +26,12 @@ export const signUp = async (payload) => {
 
 export const logIn = async (payload) => {
   return authRequest("/api/v1/auth/login", payload);
+};
+
+export const refreshAccessToken = async () => {
+  return authRequest("/api/v1/auth/refresh");
+};
+
+export const logOut = async () => {
+  return authRequest("/api/v1/auth/logout");
 };

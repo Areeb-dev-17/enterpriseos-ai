@@ -11,6 +11,18 @@ import { ROLES } from "../constants/roles.js";
 //get members
 import { getOrganizationMembers,updateMemberRole } from "../repositories/auth.repository.js";
 import {generateSlug} from "../utils/slug.js"
+import {
+    createRefreshSession,
+    getUserRoleForOrganization,
+    rotateRefreshSession,
+    revokeRefreshSession
+  } from "../repositories/refresh-session.repository.js";
+  
+  import {
+    generateRefreshToken,
+    hashRefreshToken,
+    getRefreshTokenExpiry,
+  } from "../utils/refresh-token.js";
 
 export const signUp = async (req: Request, res: Response) => {
   try {
@@ -114,11 +126,34 @@ export const logIn = async (req: Request, res: Response) => {
       });
     }
 
-    const token = generateToken({
-      userId: user.user_id,
-      organizationId: user.organization_id,
-      role: user.role,
-    });
+  // Generate short-lived access token
+const token = generateToken({
+    userId: user.user_id,
+    organizationId: user.organization_id,
+    role: user.role,
+  });
+  
+  // Generate refresh token
+  const refreshToken = generateRefreshToken();
+  const refreshTokenHash = hashRefreshToken(refreshToken);
+  const refreshTokenExpiry = getRefreshTokenExpiry();
+  
+  // Save only the hashed refresh token
+  await createRefreshSession({
+    userId: user.user_id,
+    organizationId: user.organization_id,
+    tokenHash: refreshTokenHash,
+    expiresAt: refreshTokenExpiry,
+  });
+  
+  // Send raw refresh token in an HttpOnly cookie
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/api/v1/auth",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
 
     return res.status(200).json({
       success: true,
@@ -300,6 +335,119 @@ export const createMember = async (req: Request, res: Response) => {
       return res.status(500).json({
         success: false,
         message: "Failed to update member role",
+      });
+    }
+  };
+
+  export const refreshAccessToken = async (
+    req: Request,
+    res: Response
+  ) => {
+    try {
+      const currentRefreshToken = req.cookies?.refreshToken;
+  
+      if (!currentRefreshToken) {
+        return res.status(401).json({
+          success: false,
+          message: "Refresh token is missing. Please log in again.",
+        });
+      }
+  
+      const currentTokenHash = hashRefreshToken(currentRefreshToken);
+  
+      const newRefreshToken = generateRefreshToken();
+      const newTokenHash = hashRefreshToken(newRefreshToken);
+      const newExpiry = getRefreshTokenExpiry();
+  
+      const session = await rotateRefreshSession(
+        currentTokenHash,
+        newTokenHash,
+        newExpiry
+      );
+  
+      if (!session) {
+        res.clearCookie("refreshToken", {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          sameSite: "lax",
+          path: "/api/v1/auth",
+        });
+  
+        return res.status(401).json({
+          success: false,
+          message: "Refresh token is invalid or expired. Please log in again.",
+        });
+      }
+  
+      const role = await getUserRoleForOrganization(
+        session.userId,
+        session.organizationId
+      );
+  
+      if (!role) {
+        return res.status(401).json({
+          success: false,
+          message: "User membership is no longer valid.",
+        });
+      }
+  
+      const accessToken = generateToken({
+        userId: session.userId,
+        organizationId: session.organizationId,
+        role,
+      });
+  
+      res.cookie("refreshToken", newRefreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/api/v1/auth",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+  
+      return res.status(200).json({
+        success: true,
+        message: "Access token refreshed successfully.",
+        data: {
+          token: accessToken,
+        },
+      });
+    } catch (error) {
+      console.error("Refresh token error:", error);
+  
+      return res.status(500).json({
+        success: false,
+        message: "Unable to refresh access token.",
+      });
+    }
+  };
+
+  export const logOut = async (req: Request, res: Response) => {
+    try {
+      const refreshToken = req.cookies?.refreshToken;
+  
+      if (refreshToken) {
+        const tokenHash = hashRefreshToken(refreshToken);
+        await revokeRefreshSession(tokenHash);
+      }
+  
+      res.clearCookie("refreshToken", {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/api/v1/auth",
+      });
+  
+      return res.status(200).json({
+        success: true,
+        message: "Logged out successfully.",
+      });
+    } catch (error) {
+      console.error("Logout error:", error);
+  
+      return res.status(500).json({
+        success: false,
+        message: "Unable to log out.",
       });
     }
   };

@@ -1,6 +1,6 @@
 
 import { Router } from "express";
-import { signUp ,logIn,createMember,getMembers, changeMemberRole} from "../controllers/auth.controller.js";
+import { signUp ,logIn,createMember,getMembers, changeMemberRole,refreshAccessToken,logOut} from "../controllers/auth.controller.js";
 import { authenticateToken } from "../middleware/auth.middleware.js";
 import { authorizeRoles } from "../middleware/role.middleware.js";
 
@@ -9,6 +9,8 @@ const router = Router();
 
 router.post("/signup", signUp);
 router.post("/login",logIn )
+router.post("/refresh", refreshAccessToken);
+router.post("/logout", logOut);
 router.post(
     "/members",
     authenticateToken,

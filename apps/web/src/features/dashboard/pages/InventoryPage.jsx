@@ -1,5 +1,5 @@
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Package,
   CheckCircle2,
@@ -9,24 +9,69 @@ import {
 
 import StatCard from "../pages/components/StatCard";
 import InventoryTable, {
-  initialInventoryData,
   getStockStatus,
 } from "./components/InventoryTable";
 
+import { getInventory } from "../../../services/inventoryService";
+
 export default function InventoryPage() {
-  const [products, setProducts] = useState(initialInventoryData);
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+
+  useEffect(() => {
+    const controller = new AbortController();
+  
+    const fetchInventory = async () => {
+      try {
+        setLoading(true);
+        setError("");
+  
+        const data = await getInventory(controller.signal);
+        setProducts(data);
+      } catch (err) {
+        if (err.name !== "AbortError") {
+          setError(err.message || "Failed to load inventory.");
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    };
+  
+    fetchInventory();
+  
+    return () => {
+      controller.abort();
+    };
+  }, []);
+  
 
   const stats = useMemo(() => {
     const inStock = products.filter(
-      (product) => getStockStatus(product.availableStock, product.reorderLevel) === "In Stock"
+      (product) =>
+        getStockStatus(
+          product.availableStock,
+          product.reorderLevel
+        ) === "In Stock"
     ).length;
 
     const lowStock = products.filter(
-      (product) => getStockStatus(product.availableStock, product.reorderLevel) === "Low Stock"
+      (product) =>
+        getStockStatus(
+          product.availableStock,
+          product.reorderLevel
+        ) === "Low Stock"
     ).length;
 
     const outOfStock = products.filter(
-      (product) => getStockStatus(product.availableStock, product.reorderLevel) === "Out of Stock"
+      (product) =>
+        getStockStatus(
+          product.availableStock,
+          product.reorderLevel
+        ) === "Out of Stock"
     ).length;
 
     return [
@@ -67,10 +112,11 @@ export default function InventoryPage() {
         <div>
           <h2>Inventory Management</h2>
           <p>
-            Monitor products, stock levels, and inventory health across your operations.
+            Monitor products, stock levels, and inventory health across
+            your operations.
           </p>
         </div>
-        <span className="demo-data-label">DEMO DATA</span>
+        <span className="demo-data-label">LIVE DATABASE</span>
       </div>
 
       <div className="dashboard-stats-grid">
@@ -87,7 +133,18 @@ export default function InventoryPage() {
           </div>
         </div>
 
-        <InventoryTable products={products} setProducts={setProducts} />
+        {loading && <p>Loading inventory...</p>}
+
+        {!loading && error && (
+          <p role="alert">{error}</p>
+        )}
+
+        {!loading && !error && (
+          <InventoryTable
+            products={products}
+            setProducts={setProducts}
+          />
+        )}
       </section>
     </div>
   );

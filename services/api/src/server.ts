@@ -6,6 +6,7 @@ import { pool } from "./config/database.js";
 import organizationRoutes from "./routes/organization.routes.js";
 import authRoutes from "./routes/auth.routes.js";
 import "./config/env.js";
+import inventoryRoutes from "./routes/inventory.routes.js";
 
 dotenv.config();
 
@@ -41,6 +42,7 @@ app.get("/api/v1/db-health", async (_req, res) => {
 app.use("/api/v1/organizations", organizationRoutes);
 // Auth routes
 app.use("/api/v1/auth", authRoutes);
+app.use("/api/v1/inventory", inventoryRoutes);
 
 // Start server
 app.listen(PORT, () => {

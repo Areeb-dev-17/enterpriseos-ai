@@ -6,6 +6,7 @@ import {
   getPurchaseOrdersService,
   getPurchaseOrderByIdService,
   PurchaseOrderError,
+  ReceivePurchaseOrderService
 } from "../services/purchase-order.service.js";
 
 const handlePurchaseOrderError = (
@@ -113,6 +114,36 @@ export const getPurchaseOrderByIdController = async (
 
     return res.status(200).json({
       success: true,
+      data: purchaseOrder,
+    });
+  } catch (error) {
+    return handlePurchaseOrderError(error, res);
+  }
+};
+
+
+export const ReceivePurchaseOrderController = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const id = req.params.id;
+
+    if (typeof id !== "string" || !id.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid purchase order ID",
+      });
+    }
+    const purchaseOrder = await ReceivePurchaseOrderService(
+      id,
+      req.user!.organizationId,
+      req.body
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Purchase order items received successfully",
       data: purchaseOrder,
     });
   } catch (error) {

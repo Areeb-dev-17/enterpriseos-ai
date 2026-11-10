@@ -18,6 +18,7 @@ import StatCard from "../pages/components/StatCard";
 import {
   getPurchaseOrders,
   createPurchaseOrder,
+  receivePurchaseOrder
 } from "../../../services/purchaseOrderService";
 import { getInventory } from "../../../services/inventoryService";
 
@@ -89,7 +90,9 @@ function PurchaseOrderModal({
   inventory = [],
   onClose,
   onSave,
+  onReceive,
   saving = false,
+  receiving = false,
 }) {
   const isView = Boolean(order);
 
@@ -107,6 +110,7 @@ function PurchaseOrderModal({
   ]);
 
   const [error, setError] = useState("");
+  const [receiveQuantities, setReceiveQuantities] = useState({});
 
   const updateField = (event) => {
     const { name, value } = event.target;
@@ -115,6 +119,68 @@ function PurchaseOrderModal({
       ...current,
       [name]: value,
     }));
+  };
+
+  const handleReceiveQuantityChange = (itemId, value) => {
+    console.log("Receiving input:", { itemId, value });
+
+    setReceiveQuantities((prev) => ({
+      ...prev,
+      [itemId]: value,
+    }));
+  };
+  const getRemainingQuantity = (product) =>
+    product.quantity - product.receivedQuantity;
+
+
+  const handleReceive = async () => {
+    setError("");
+  
+    const receivedItems = order.products
+      .map((product) => {
+        const enteredValue = receiveQuantities[product.id];
+  
+        return {
+          itemId: product.id,
+          enteredValue,
+          quantity: Number(enteredValue),
+          remaining: getRemainingQuantity(product),
+        };
+      })
+      .filter((item) => item.enteredValue !== undefined && item.enteredValue !== "");
+  
+    if (receivedItems.length === 0) {
+      setError(
+        `No quantity captured. Current values: ${JSON.stringify(receiveQuantities)}`
+      );
+      return;
+    }
+  
+    const invalidItem = receivedItems.find(
+      (item) =>
+        !Number.isInteger(item.quantity) ||
+        item.quantity <= 0 ||
+        item.quantity > item.remaining
+    );
+  
+    if (invalidItem) {
+      setError("Enter a valid quantity within the remaining amount.");
+      return;
+    }
+  
+    try {
+      await onReceive(
+        order.id,
+        receivedItems.map(({ itemId, quantity }) => ({
+          itemId,
+          quantity,
+        }))
+      );
+  
+      setReceiveQuantities({});
+    } catch (err) {
+      setError(err.message || "Failed to receive stock.");
+    }
   };
 
   const updateItem = (index, field, value) => {
@@ -313,27 +379,77 @@ function PurchaseOrderModal({
                         <small>{product.sku}</small>
                       )}
                     </div>
+                    <div>
+  <strong>
+    {product.quantity} × {formatCurrency(product.unitPrice)}
+  </strong>
 
-                    <strong>
-                      {product.quantity} ×{" "}
-                      {formatCurrency(product.unitPrice)}
-                    </strong>
+  <small style={{marginLeft:"17px",fontSize:"unset"}}>
+    Received: {product.receivedQuantity} / {product.quantity}
+    {" · "}
+    Remaining: {getRemainingQuantity(product)}
+  </small>
+
+  {getRemainingQuantity(product) > 0 && (
+    <div className="receive-quantity-control">
+      <label htmlFor={`receive-${product.id}`}>
+        Receive now
+      </label>
+
+      <input
+  id={`receive-${product.id}`}
+  type="number"
+  min="1"
+  max={getRemainingQuantity(product)}
+  step="1"
+  value={receiveQuantities[product.id] ?? ""}
+  onChange={(event) => {
+    const value = event.target.value;
+
+    setReceiveQuantities((current) => ({
+      ...current,
+      [product.id]: value,
+    }));
+  }}
+  placeholder={`Max ${getRemainingQuantity(product)}`}
+/>
+    </div>
+  )}
+</div>
                   </div>
                 ))
               ) : (
                 <p>No products found for this order.</p>
               )}
             </div>
+            {error && (
+  <p className="inventory-form-error">{error}</p>
+)}
 
-            <div className="po-modal-actions">
-              <button
-                type="button"
-                className="inventory-secondary-button"
-                onClick={onClose}
-              >
-                Close
-              </button>
-            </div>
+<div className="po-modal-actions">
+  <button
+    type="button"
+    className="inventory-secondary-button"
+    onClick={onClose}
+    disabled={receiving}
+  >
+    Close
+  </button>
+
+  {order.products?.some(
+    (product) => getRemainingQuantity(product) > 0
+  ) && (
+    <button
+      type="button"
+      className="inventory-add-button"
+      onClick={handleReceive}
+      disabled={receiving}
+    >
+      <Truck size={15} />
+      {receiving ? "Receiving..." : "Receive Stock"}
+    </button>
+  )}
+</div>
           </>
         ) : (
           <form onSubmit={handleSubmit}>
@@ -526,6 +642,9 @@ function PurchaseOrdersTable({
   orders,
   inventory,
   onOrderCreated,
+  onOrderUpdated,
+  onInventoryUpdated,
+
 }) {
   const [searchText, setSearchText] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("All");
@@ -533,6 +652,7 @@ function PurchaseOrdersTable({
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
+  const [receiving, setReceiving] = useState(false);
 
   const showToast = (message) => {
     setToast(message);
@@ -575,6 +695,33 @@ function PurchaseOrdersTable({
       showToast("Purchase order created successfully.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleReceive = async (orderId, items) => {
+    setReceiving(true);
+  
+    try {
+      // 1. Send received quantities to the backend.
+      const updatedOrder = await receivePurchaseOrder(orderId, items);
+  
+      // 2. Convert the backend response into our UI format.
+      const mappedOrder = mapPurchaseOrder(updatedOrder);
+  
+      // 3. Update the purchase order in the parent component.
+      onOrderUpdated(mappedOrder);
+  
+      // 4. Keep the modal updated with the latest PO details.
+      setModalOrder(mappedOrder);
+  
+      // 5. Fetch inventory again because stock has changed.
+      const updatedInventory = await getInventory();
+  
+      onInventoryUpdated(updatedInventory);
+  
+      showToast("Stock received and inventory updated successfully.");
+    } finally {
+      setReceiving(false);
     }
   };
 
@@ -730,6 +877,9 @@ function PurchaseOrdersTable({
           key={modalOrder.id}
           order={modalOrder}
           onClose={() => setModalOrder(null)}
+          onReceive={handleReceive}
+    receiving={receiving}
+
         />
       )}
 
@@ -844,6 +994,18 @@ export default function PurchaseOrdersPage() {
     setOrders((current) => [newOrder, ...current]);
   };
 
+  const handleOrderUpdated = (updatedOrder) => {
+    setOrders((current) =>
+      current.map((order) =>
+        order.id === updatedOrder.id ? updatedOrder : order
+      )
+    );
+  };
+  
+  const handleInventoryUpdated = (updatedInventory) => {
+    setInventory(updatedInventory);
+  };
+
   return (
     <div className="dashboard-overview">
       <div className="overview-heading">
@@ -882,6 +1044,9 @@ export default function PurchaseOrdersPage() {
             orders={orders}
             inventory={inventory}
             onOrderCreated={handleOrderCreated}
+            onOrderUpdated={handleOrderUpdated}
+            onInventoryUpdated={handleInventoryUpdated}
+          
           />
         )}
       </section>

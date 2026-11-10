@@ -17,3 +17,13 @@ export const createPurchaseOrder = (purchaseOrder) =>
     method: "POST",
     body: JSON.stringify(purchaseOrder),
   });
+
+  export const receivePurchaseOrder = (id, items) =>
+    apiRequest(
+      `/api/v1/purchase-orders/${encodeURIComponent(id)}/receive`,
+      {
+        method: "POST",
+        body: JSON.stringify({ items }),
+      }
+    );
+  

@@ -3,7 +3,9 @@ import {
     createPurchaseOrder,
     getPurchaseOrders,
     getPurchaseOrderById,
+    ReceivePurchaseOrder,
     type CreatePurchaseOrderInput,
+    type ReceivePurchaseOrderInput,
   } from "../repositories/purchase-order.repository.js";
   
   export class PurchaseOrderError extends Error {
@@ -135,4 +137,98 @@ import {
   
     return purchaseOrder;
   };
+
+
+export const ReceivePurchaseOrderService = async (
+  purchaseOrderId: string,
+  organizationId: string,
+  data: ReceivePurchaseOrderInput
+) => {
+  // 1. Validate purchase order ID.
+  if (!isValidUUID(purchaseOrderId)) {
+    throw new PurchaseOrderError(
+      "Invalid purchase order ID",
+      400
+    );
+  }
+
+  // 2. Validate receiving items.
+  if (!data || !Array.isArray(data.items) || data.items.length === 0) {
+    throw new PurchaseOrderError(
+      "At least one item is required for receiving",
+      400
+    );
+  }
+
+  // 3. Validate each item.
+  const receivedItemIds = new Set<string>();
+
+  for (const item of data.items) {
+    if (!isValidUUID(item.itemId)) {
+      throw new PurchaseOrderError(
+        "Invalid purchase order item ID",
+        400
+      );
+    }
+
+    if (
+      !Number.isInteger(item.quantity) ||
+      item.quantity <= 0
+    ) {
+      throw new PurchaseOrderError(
+        "Received quantity must be a positive integer",
+        400
+      );
+    }
+
+    if (receivedItemIds.has(item.itemId)) {
+      throw new PurchaseOrderError(
+        "Duplicate purchase order items are not allowed",
+        400
+      );
+    }
+
+    receivedItemIds.add(item.itemId);
+  }
+
+  // 4. Execute the database receiving transaction.
+  try {
+    const purchaseOrder = await ReceivePurchaseOrder(
+      purchaseOrderId,
+      organizationId,
+      data
+    );
+
+    // 5. Handle missing purchase order.
+    if (!purchaseOrder) {
+      throw new PurchaseOrderError(
+        "Purchase order not found",
+        404
+      );
+    }
+
+    return purchaseOrder;
+  } catch (error) {
+    if (error instanceof PurchaseOrderError) {
+      throw error;
+    }
+
+    if (error instanceof Error) {
+      if (error.message.startsWith("Cannot receive a purchase order")) {
+        throw new PurchaseOrderError(error.message, 409);
+      }
+
+      if (
+        error.message.includes("remaining quantity") ||
+        error.message.includes("do not belong") ||
+        error.message.includes("more than once")
+      ) {
+        throw new PurchaseOrderError(error.message, 400);
+      }
+    }
+
+    throw error;
+  }
+};
+
   

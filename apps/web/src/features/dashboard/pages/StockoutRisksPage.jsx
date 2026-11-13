@@ -1,5 +1,6 @@
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { AgGridReact } from "ag-grid-react";
 import {
   AlertTriangle,
   AlertCircle,
@@ -7,97 +8,16 @@ import {
   Package,
   Search,
   X,
-  ShoppingCart,
-  Sparkles,
   ArrowRight,
 } from "lucide-react";
 
+import { getStockoutRisks } from "../../../services/stockoutRiskService";
 import StatCard from "./components/StatCard";
 
-const initialRiskData = [
-  {
-    id: 1,
-    name: "Classic Cotton T-Shirt",
-    sku: "APP-1024",
-    category: "Apparel",
-    stock: 42,
-    dailySales: 18,
-    leadTime: 5,
-    supplier: "Fashion Supply Co.",
-    unitPrice: 899,
-    severity: "Critical",
-    reason: "Current stock is insufficient to cover expected demand during supplier lead time.",
-    recommendation: "Prepare an urgent replenishment order for 120 units.",
-  },
-  {
-    id: 2,
-    name: "Slim Fit Denim Jeans",
-    sku: "APP-2081",
-    category: "Apparel",
-    stock: 86,
-    dailySales: 22,
-    leadTime: 4,
-    supplier: "Denim Works",
-    unitPrice: 1899,
-    severity: "High",
-    reason: "Sales velocity is high relative to available inventory.",
-    recommendation: "Consider replenishing 100 units before the next sales cycle.",
-  },
-  {
-    id: 3,
-    name: "Leather Crossbody Bag",
-    sku: "ACC-3015",
-    category: "Accessories",
-    stock: 120,
-    dailySales: 24,
-    leadTime: 6,
-    supplier: "Premium Accessories Ltd.",
-    unitPrice: 2499,
-    severity: "High",
-    reason: "Projected inventory coverage is below the supplier lead time.",
-    recommendation: "Prepare a replenishment order for 150 units.",
-  },
-  {
-    id: 4,
-    name: "Running Sneakers",
-    sku: "FOO-4052",
-    category: "Footwear",
-    stock: 210,
-    dailySales: 30,
-    leadTime: 5,
-    supplier: "Active Footwear",
-    unitPrice: 3299,
-    severity: "Medium",
-    reason: "Inventory coverage is approaching the expected replenishment window.",
-    recommendation: "Review demand and plan a replenishment of 100 units.",
-  },
-  {
-    id: 5,
-    name: "Premium Hoodie",
-    sku: "APP-5093",
-    category: "Apparel",
-    stock: 340,
-    dailySales: 32,
-    leadTime: 8,
-    supplier: "Urban Apparel",
-    unitPrice: 2199,
-    severity: "Medium",
-    reason: "Long supplier lead time increases the risk of future stock shortages.",
-    recommendation: "Monitor sales velocity and prepare a replenishment plan.",
-  },
-];
-
 const formatCurrency = (value) =>
-  new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(value);
-
-function getDaysRemaining(stock, dailySales) {
-  if (dailySales <= 0) return Infinity;
-  return stock / dailySales;
-}
+  `₹${Number(value || 0).toLocaleString("en-IN", {
+    maximumFractionDigits: 2,
+  })}`;
 
 function RiskBadge({ severity }) {
   return (
@@ -108,13 +28,23 @@ function RiskBadge({ severity }) {
   );
 }
 
-function RiskDetailsModal({ product, onClose, onPrepareOrder }) {
+function RiskLevelRenderer({ value }) {
+  return <RiskBadge severity={value} />;
+}
+
+function ProductNameRenderer({ data }) {
+  return (
+    <div className="risk-product-cell">
+      <div className="risk-product-name">{data.name}</div>
+      <div className="risk-product-sku">{data.sku}</div>
+    </div>
+  );
+}
+
+function RiskDetailsModal({ product, onClose }) {
   if (!product) return null;
 
-  const daysRemaining = getDaysRemaining(
-    product.stock,
-    product.dailySales
-  );
+  const stockDifference = product.stock - product.reorderLevel;
 
   return (
     <div
@@ -131,7 +61,9 @@ function RiskDetailsModal({ product, onClose, onPrepareOrder }) {
       >
         <div className="risk-modal-header">
           <div>
-            <span className="risk-modal-eyebrow">STOCKOUT RISK DETAILS</span>
+            <span className="risk-modal-eyebrow">
+              STOCKOUT RISK DETAILS
+            </span>
             <h2 id="risk-modal-title">{product.name}</h2>
             <p>{product.sku} · {product.category}</p>
           </div>
@@ -149,9 +81,9 @@ function RiskDetailsModal({ product, onClose, onPrepareOrder }) {
         <div className="risk-modal-status">
           <RiskBadge severity={product.severity} />
           <span>
-            {Number.isFinite(daysRemaining)
-              ? `${daysRemaining.toFixed(1)} days of stock remaining`
-              : "Sales data unavailable"}
+            {product.stock === 0
+              ? "This product is currently out of stock."
+              : `${product.stock} units currently available.`}
           </span>
         </div>
 
@@ -160,14 +92,21 @@ function RiskDetailsModal({ product, onClose, onPrepareOrder }) {
             <span>Available stock</span>
             <strong>{product.stock} units</strong>
           </div>
+
           <div>
-            <span>Daily sales</span>
-            <strong>{product.dailySales} units</strong>
+            <span>Reorder level</span>
+            <strong>{product.reorderLevel} units</strong>
           </div>
+
           <div>
-            <span>Supplier lead time</span>
-            <strong>{product.leadTime} days</strong>
+            <span>Stock vs reorder level</span>
+            <strong>
+              {stockDifference >= 0
+                ? `${stockDifference} units above`
+                : `${Math.abs(stockDifference)} units below`}
+            </strong>
           </div>
+
           <div>
             <span>Unit price</span>
             <strong>{formatCurrency(product.unitPrice)}</strong>
@@ -179,18 +118,14 @@ function RiskDetailsModal({ product, onClose, onPrepareOrder }) {
             <AlertTriangle size={17} />
             <h3>Why is this product at risk?</h3>
           </div>
-          <p>{product.reason}</p>
-        </div>
 
-        <div className="risk-recommendation">
-          <div className="risk-explanation-heading">
-            <Sparkles size={17} />
-            <h3>Recommended action</h3>
-          </div>
-          <p>{product.recommendation}</p>
-          <span className="risk-demo-note">
-            Illustrative recommendation based on synthetic demo data.
-          </span>
+          <p>
+            {product.stock === 0
+              ? "Available inventory has reached zero."
+              : product.stock <= product.reorderLevel
+                ? "Available inventory has reached or fallen below its configured reorder level."
+                : "Available inventory is approaching the configured reorder threshold."}
+          </p>
         </div>
 
         <div className="risk-modal-actions">
@@ -201,14 +136,6 @@ function RiskDetailsModal({ product, onClose, onPrepareOrder }) {
           >
             Close
           </button>
-          <button
-            type="button"
-            className="risk-primary-button"
-            onClick={() => onPrepareOrder(product)}
-          >
-            <ShoppingCart size={15} />
-            Prepare Purchase Order
-          </button>
         </div>
       </section>
     </div>
@@ -216,20 +143,67 @@ function RiskDetailsModal({ product, onClose, onPrepareOrder }) {
 }
 
 export default function StockoutRisksPage() {
-  const [risks] = useState(initialRiskData);
+  const [risks, setRisks] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [searchText, setSearchText] = useState("");
   const [selectedSeverity, setSelectedSeverity] = useState("All");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [selectedProduct, setSelectedProduct] = useState(null);
-  const [toast, setToast] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const fetchRisks = async () => {
+      try {
+        setLoading(true);
+        setError("");
+
+        const data = await getStockoutRisks(controller.signal);
+
+        const mappedProducts = data.products.map((product) => ({
+          id: product.id,
+          name: product.productName,
+          sku: product.sku,
+          category: product.category,
+          stock: Number(product.availableStock),
+          reorderLevel: Number(product.reorderLevel),
+          unitPrice: Number(product.unitPrice),
+          severity: product.riskLevel,
+        }));
+
+        setRisks(mappedProducts);
+      } catch (err) {
+        if (err.name !== "AbortError") {
+          setError(err.message || "Failed to load stockout risks.");
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchRisks();
+
+    return () => controller.abort();
+  }, []);
+
+  const categories = useMemo(
+    () =>
+      [...new Set(risks.map((product) => product.category).filter(Boolean))]
+        .sort(),
+    [risks]
+  );
 
   const filteredRisks = useMemo(() => {
-    return risks.filter((product) => {
-      const search = searchText.toLowerCase();
+    const query = searchText.trim().toLowerCase();
 
+    return risks.filter((product) => {
       const matchesSearch =
-        product.name.toLowerCase().includes(search) ||
-        product.sku.toLowerCase().includes(search);
+        !query ||
+        product.name.toLowerCase().includes(query) ||
+        product.sku.toLowerCase().includes(query);
 
       const matchesSeverity =
         selectedSeverity === "All" ||
@@ -255,14 +229,87 @@ export default function StockoutRisksPage() {
     (product) => product.severity === "Medium"
   ).length;
 
-  const handlePrepareOrder = (product) => {
-    setSelectedProduct(null);
-    setToast(`Purchase order draft prepared for ${product.name}.`);
+  const columnDefs = useMemo(
+    () => [
+      {
+        field: "name",
+        headerName: "Product",
+        flex: 1.5,
+        minWidth: 190,
+        cellRenderer: ProductNameRenderer,
+      },
+      {
+        field: "category",
+        headerName: "Category",
+        minWidth: 120,
+      },
+      {
+        field: "stock",
+        headerName: "Available Stock",
+        minWidth: 140,
+        filter: "agNumberColumnFilter",
+        valueFormatter: (params) => `${params.value} units`,
+      },
+      {
+        field: "reorderLevel",
+        headerName: "Reorder Level",
+        minWidth: 130,
+        filter: "agNumberColumnFilter",
+        valueFormatter: (params) => `${params.value} units`,
+      },
+      {
+        field: "unitPrice",
+        headerName: "Unit Price",
+        minWidth: 120,
+        filter: "agNumberColumnFilter",
+        valueFormatter: (params) => formatCurrency(params.value),
+      },
+      {
+        field: "severity",
+        headerName: "Risk Level",
+        minWidth: 130,
+        cellRenderer: RiskLevelRenderer,
+      },
+      {
+        headerName: "Actions",
+        field: "actions",
+        minWidth: 135,
+        maxWidth: 145,
+        sortable: false,
+        filter: false,
+        floatingFilter: false,
+        cellRenderer: (params) => (
+          <div className="inventory-row-actions">
+            <button
+              type="button"
+              title="View risk details"
+              onClick={() => params.context.onView(params.data)}
+            >
+              <ArrowRight size={15} />
+            </button>
+          </div>
+        ),
+      },
+    ],
+    []
+  );
 
-    window.setTimeout(() => {
-      setToast("");
-    }, 3500);
-  };
+  const defaultColDef = useMemo(
+    () => ({
+      sortable: true,
+      filter: true,
+      resizable: true,
+      floatingFilter: true,
+    }),
+    []
+  );
+
+  const context = useMemo(
+    () => ({
+      onView: (product) => setSelectedProduct(product),
+    }),
+    []
+  );
 
   return (
     <div className="dashboard-overview stockout-risks-page">
@@ -275,7 +322,7 @@ export default function StockoutRisksPage() {
           </p>
         </div>
 
-        <span className="demo-data-label">DEMO DATA</span>
+        <span className="demo-data-label">LIVE DATA</span>
       </div>
 
       <div className="dashboard-stats-grid">
@@ -329,12 +376,14 @@ export default function StockoutRisksPage() {
         <div className="stockout-risk-toolbar">
           <div className="stockout-risk-search">
             <Search size={16} />
+
             <input
               type="search"
               placeholder="Search product or SKU..."
               value={searchText}
               onChange={(event) => setSearchText(event.target.value)}
             />
+
             {searchText && (
               <button
                 type="button"
@@ -363,96 +412,46 @@ export default function StockoutRisksPage() {
             aria-label="Filter by category"
           >
             <option value="All">All categories</option>
-            <option value="Apparel">Apparel</option>
-            <option value="Accessories">Accessories</option>
-            <option value="Footwear">Footwear</option>
+            {categories.map((category) => (
+              <option key={category} value={category}>
+                {category}
+              </option>
+            ))}
           </select>
         </div>
 
-        <div className="stockout-risk-table-wrapper">
-          <table className="stockout-risk-table">
-            <thead>
-              <tr>
-                <th>PRODUCT</th>
-                <th>AVAILABLE STOCK</th>
-                <th>DAILY SALES</th>
-                <th>DAYS LEFT</th>
-                <th>LEAD TIME</th>
-                <th>RISK LEVEL</th>
-                <th>ACTION</th>
-              </tr>
-            </thead>
+        {error && (
+          <div className="stockout-risk-error" role="alert">
+            {error}
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
-            <tbody>
-              {filteredRisks.map((product) => {
-                const daysRemaining = getDaysRemaining(
-                  product.stock,
-                  product.dailySales
-                );
-
-                return (
-                  <tr key={product.id}>
-                    <td>
-                      <div className="risk-product-name">
-                        {product.name}
-                      </div>
-                      <div className="risk-product-sku">
-                        {product.sku}
-                      </div>
-                    </td>
-
-                    <td>{product.stock} units</td>
-                    <td>{product.dailySales} units</td>
-
-                    <td>
-                      <strong className="risk-days-left">
-                        {Number.isFinite(daysRemaining)
-                          ? `${daysRemaining.toFixed(1)} days`
-                          : "N/A"}
-                      </strong>
-                    </td>
-
-                    <td>{product.leadTime} days</td>
-
-                    <td>
-                      <RiskBadge severity={product.severity} />
-                    </td>
-
-                    <td>
-                      <button
-                        type="button"
-                        className="risk-view-button"
-                        onClick={() => setSelectedProduct(product)}
-                      >
-                        View details
-                        <ArrowRight size={13} />
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-
-              {filteredRisks.length === 0 && (
-                <tr>
-                  <td colSpan="7">
-                    <div className="stockout-risk-empty">
-                      <Package size={28} />
-                      <strong>No matching products</strong>
-                      <span>
-                        Try changing your search or filter selections.
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+        <div className="inventory-grid-wrapper">
+          <div className="ag-theme-quartz-dark inventory-grid">
+            <AgGridReact
+              rowData={filteredRisks}
+              columnDefs={columnDefs}
+              defaultColDef={defaultColDef}
+              context={context}
+              getRowId={(params) => String(params.data.id)}
+              pagination={true}
+              paginationPageSize={10}
+              loading={loading}
+              animateRows
+            />
+          </div>
         </div>
 
         <div className="stockout-risk-footer">
           <AlertTriangle size={14} />
-          Risk calculations shown here use illustrative synthetic data.
-          Production risk scores will use inventory, demand and supplier data.
+          Risk levels are calculated using available stock and configured
+          reorder levels.
         </div>
       </section>
 
@@ -460,14 +459,7 @@ export default function StockoutRisksPage() {
         <RiskDetailsModal
           product={selectedProduct}
           onClose={() => setSelectedProduct(null)}
-          onPrepareOrder={handlePrepareOrder}
         />
-      )}
-
-      {toast && (
-        <div className="inventory-toast" role="status">
-          {toast}
-        </div>
       )}
     </div>
   );

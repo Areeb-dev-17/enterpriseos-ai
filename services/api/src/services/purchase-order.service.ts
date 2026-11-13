@@ -232,3 +232,69 @@ export const ReceivePurchaseOrderService = async (
 };
 
   
+
+export const getOpenPurchaseOrdersService = async (
+  organizationId: string
+) => {
+  const purchaseOrders = await getPurchaseOrders(organizationId);
+
+  const openStatuses = [
+    "Pending",
+    "Approved",
+    "Partially Received",
+  ];
+
+  const openOrders = purchaseOrders
+    .filter((order) => openStatuses.includes(order.status))
+    .map((order) => {
+      const items = order.items
+        .map((item: any) => ({
+          ...item,
+          remainingQuantity: Math.max(
+            Number(item.quantity) - Number(item.receivedQuantity),
+            0
+          ),
+        }))
+        .filter((item: any) => item.remainingQuantity > 0);
+
+      return {
+        id: order.id,
+        supplierName: order.supplierName,
+        status: order.status,
+        expectedDate: order.expectedDate,
+        items,
+      };
+    })
+    .filter((order) => order.items.length > 0);
+
+  const incomingMap = new Map<string, any>();
+
+  for (const order of openOrders) {
+    for (const item of order.items) {
+      const existing = incomingMap.get(item.productId);
+
+      if (existing) {
+        existing.pendingQuantity += item.remainingQuantity;
+      } else {
+        incomingMap.set(item.productId, {
+          productId: item.productId,
+          productName: item.productName,
+          sku: item.sku,
+          pendingQuantity: item.remainingQuantity,
+        });
+      }
+    }
+  }
+
+  const incomingByProduct = Array.from(incomingMap.values());
+
+  return {
+    totalOpenOrders: openOrders.length,
+    totalIncomingUnits: incomingByProduct.reduce(
+      (total, item) => total + item.pendingQuantity,
+      0
+    ),
+    incomingByProduct,
+    orders: openOrders,
+  };
+};

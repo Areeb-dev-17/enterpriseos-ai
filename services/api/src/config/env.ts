@@ -15,3 +15,7 @@ if (!process.env.DATABASE_URL) {
 if (!process.env.JWT_SECRET) {
   throw new Error("JWT_SECRET is not configured");
 }
+
+if (!process.env.AI_SERVICE_URL) {
+  throw new Error("AI_SERVICE_URL is not configured");
+}

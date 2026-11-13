@@ -1,5 +1,5 @@
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Highcharts from "highcharts";
 import { HighchartsReact } from "highcharts-react-official";
 import {
@@ -9,10 +9,7 @@ import {
   XCircle,
 } from "lucide-react";
 
-import {
-  initialInventoryData,
-  getStockStatus,
-} from "./components/InventoryTable";
+import { getAnalytics } from "../../../services/analyticsService";
 
 const GOLD = "#D4AF62";
 
@@ -30,228 +27,253 @@ function MetricCard({ title, value, description, icon: Icon }) {
 }
 
 function AnalyticsPage() {
-  const analytics = useMemo(() => {
-    const products = initialInventoryData;
+  const [analytics, setAnalytics] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-    const totalProducts = products.length;
+  useEffect(() => {
+    const controller = new AbortController();
 
-    const totalUnits = products.reduce(
-      (sum, product) => sum + product.availableStock,
-      0
-    );
+    const fetchAnalytics = async () => {
+      try {
+        setLoading(true);
+        setError("");
 
-    const inventoryValue = products.reduce(
-      (sum, product) =>
-        sum + product.availableStock * product.unitPrice,
-      0
-    );
+        const data = await getAnalytics(controller.signal);
+        setAnalytics(data);
+      } catch (err) {
+        if (err.name !== "AbortError") {
+          setError(err.message || "Failed to load analytics.");
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    };
 
-    const lowStock = products.filter(
-      (product) =>
-        getStockStatus(
-          product.availableStock,
-          product.reorderLevel
-        ) === "Low Stock"
-    ).length;
+    fetchAnalytics();
 
-    const outOfStock = products.filter(
-      (product) =>
-        getStockStatus(
-          product.availableStock,
-          product.reorderLevel
-        ) === "Out of Stock"
-    ).length;
+    return () => controller.abort();
+  }, []);
 
-    const categoryMap = {};
+  const summary = analytics?.summary;
 
-    products.forEach((product) => {
-      categoryMap[product.category] =
-        (categoryMap[product.category] || 0) +
-        product.availableStock;
-    });
+  const categoryData = useMemo(
+    () =>
+      (analytics?.categoryData || []).map((item) => ({
+        name: item.name,
+        y: Number(item.value),
+      })),
+    [analytics]
+  );
 
-    const categoryData = Object.entries(categoryMap).map(
-      ([name, value]) => ({ name, y: value })
-    );
-
-    const statusCounts = {
+  const statusCounts = useMemo(() => {
+    const counts = {
       "In Stock": 0,
       "Low Stock": 0,
       "Out of Stock": 0,
     };
 
-    products.forEach((product) => {
-      const status = getStockStatus(
-        product.availableStock,
-        product.reorderLevel
-      );
-
-      statusCounts[status]++;
+    (analytics?.statusData || []).forEach((item) => {
+      counts[item.name] = Number(item.value);
     });
 
-    const topProducts = [...products]
-      .sort(
-        (a, b) =>
-          b.availableStock * b.unitPrice -
-          a.availableStock * a.unitPrice
-      )
-      .slice(0, 5);
+    return counts;
+  }, [analytics]);
 
-    return {
-      totalProducts,
-      totalUnits,
-      inventoryValue,
-      lowStock,
-      outOfStock,
-      categoryData,
-      statusCounts,
-      topProducts,
-    };
-  }, []);
+  const topProducts = useMemo(
+    () =>
+      (analytics?.topProducts || []).map((product) => ({
+        ...product,
+        availableStock: Number(product.availableStock),
+        unitPrice: Number(product.unitPrice),
+        inventoryValue: Number(product.inventoryValue),
+      })),
+    [analytics]
+  );
 
-  const categoryOptions = {
-    chart: {
-      type: "column",
-      backgroundColor: "transparent",
-      height: 300,
-    },
-    title: { text: null },
-    credits: { enabled: false },
-    exporting: { enabled: false },
-    legend: { enabled: false },
-    xAxis: {
-      categories: analytics.categoryData.map((item) => item.name),
-      lineColor: "#303030",
-      labels: { style: { color: "#A1A1AA" } },
-    },
-    yAxis: {
+  const categoryOptions = useMemo(
+    () => ({
+      chart: {
+        type: "column",
+        backgroundColor: "transparent",
+        height: 300,
+      },
       title: { text: null },
-      gridLineColor: "#303030",
-      labels: { style: { color: "#A1A1AA" } },
-    },
-    tooltip: {
-      backgroundColor: "#181818",
-      style: { color: "#F5F5F5" },
-      borderColor: "#303030",
-    },
-    plotOptions: {
-      column: {
-        borderRadius: 5,
-        color: GOLD,
+      credits: { enabled: false },
+      exporting: { enabled: false },
+      legend: { enabled: false },
+      xAxis: {
+        categories: categoryData.map((item) => item.name),
+        lineColor: "#303030",
+        labels: { style: { color: "#A1A1AA" } },
       },
-    },
-    series: [
-      {
-        name: "Available Units",
-        data: analytics.categoryData.map((item) => item.y),
+      yAxis: {
+        title: { text: null },
+        gridLineColor: "#303030",
+        labels: { style: { color: "#A1A1AA" } },
       },
-    ],
-  };
+      tooltip: {
+        backgroundColor: "#181818",
+        style: { color: "#F5F5F5" },
+        borderColor: "#303030",
+      },
+      plotOptions: {
+        column: {
+          borderRadius: 5,
+          color: GOLD,
+        },
+      },
+      series: [
+        {
+          name: "Available Units",
+          data: categoryData.map((item) => item.y),
+        },
+      ],
+    }),
+    [categoryData]
+  );
 
-  const statusOptions = {
-    chart: {
-      type: "pie",
-      backgroundColor: "transparent",
-      height: 300,
-    },
-    title: { text: null },
-    credits: { enabled: false },
-    exporting: { enabled: false },
-    tooltip: {
-      pointFormat:
-        "<b>{point.y}</b> products ({point.percentage:.1f}%)",
-      backgroundColor: "#181818",
-      style: { color: "#F5F5F5" },
-      borderColor: "#303030",
-    },
-    plotOptions: {
-      pie: {
-        innerSize: "65%",
-        borderWidth: 0,
-        dataLabels: {
-          enabled: true,
-          format: "{point.name}: {point.y}",
-          style: {
-            color: "#F5F5F5",
-            textOutline: "none",
+  const statusOptions = useMemo(
+    () => ({
+      chart: {
+        type: "pie",
+        backgroundColor: "transparent",
+        height: 300,
+      },
+      title: { text: null },
+      credits: { enabled: false },
+      exporting: { enabled: false },
+      tooltip: {
+        pointFormat:
+          "<b>{point.y}</b> products ({point.percentage:.1f}%)",
+        backgroundColor: "#181818",
+        style: { color: "#F5F5F5" },
+        borderColor: "#303030",
+      },
+      plotOptions: {
+        pie: {
+          innerSize: "65%",
+          borderWidth: 0,
+          dataLabels: {
+            enabled: true,
+            format: "{point.name}: {point.y}",
+            style: {
+              color: "#F5F5F5",
+              textOutline: "none",
+            },
           },
         },
       },
-    },
-    series: [
-      {
-        name: "Products",
-        data: [
-          {
-            name: "In Stock",
-            y: analytics.statusCounts["In Stock"],
-            color: "#4CAF82",
-          },
-          {
-            name: "Low Stock",
-            y: analytics.statusCounts["Low Stock"],
-            color: GOLD,
-          },
-          {
-            name: "Out of Stock",
-            y: analytics.statusCounts["Out of Stock"],
-            color: "#E36B6B",
-          },
-        ],
-      },
-    ],
-  };
+      series: [
+        {
+          name: "Products",
+          data: [
+            {
+              name: "In Stock",
+              y: statusCounts["In Stock"],
+              color: "#4CAF82",
+            },
+            {
+              name: "Low Stock",
+              y: statusCounts["Low Stock"],
+              color: GOLD,
+            },
+            {
+              name: "Out of Stock",
+              y: statusCounts["Out of Stock"],
+              color: "#E36B6B",
+            },
+          ],
+        },
+      ],
+    }),
+    [statusCounts]
+  );
 
-  const topProductsOptions = {
-    chart: {
-      type: "bar",
-      backgroundColor: "transparent",
-      height: 300,
-    },
-    title: { text: null },
-    credits: { enabled: false },
-    exporting: { enabled: false },
-    legend: { enabled: false },
-    xAxis: {
-      categories: analytics.topProducts.map(
-        (product) => product.productName
-      ),
-      lineColor: "#303030",
-      labels: {
-        style: { color: "#A1A1AA" },
+  const topProductsOptions = useMemo(
+    () => ({
+      chart: {
+        type: "bar",
+        backgroundColor: "transparent",
+        height: 300,
       },
-    },
-    yAxis: {
       title: { text: null },
-      gridLineColor: "#303030",
-      labels: {
-        style: { color: "#A1A1AA" },
+      credits: { enabled: false },
+      exporting: { enabled: false },
+      legend: { enabled: false },
+      xAxis: {
+        categories: topProducts.map((product) => product.productName),
+        lineColor: "#303030",
+        labels: {
+          style: { color: "#A1A1AA" },
+        },
       },
-    },
-    tooltip: {
-      backgroundColor: "#181818",
-      style: { color: "#F5F5F5" },
-      borderColor: "#303030",
-      formatter: function () {
-        return `<b>${this.category}</b><br/>Inventory value: ₹${this.y.toLocaleString("en-IN")}`;
+      yAxis: {
+        title: { text: null },
+        gridLineColor: "#303030",
+        labels: {
+          style: { color: "#A1A1AA" },
+        },
       },
-    },
-    plotOptions: {
-      bar: {
-        borderRadius: 4,
-        color: GOLD,
+      tooltip: {
+        backgroundColor: "#181818",
+        style: { color: "#F5F5F5" },
+        borderColor: "#303030",
+        formatter: function () {
+          return `<b>${this.category}</b><br/>Inventory value: ₹${Number(
+            this.y
+          ).toLocaleString("en-IN")}`;
+        },
       },
-    },
-    series: [
-      {
-        name: "Inventory Value",
-        data: analytics.topProducts.map(
-          (product) =>
-            product.availableStock * product.unitPrice
-        ),
+      plotOptions: {
+        bar: {
+          borderRadius: 4,
+          color: GOLD,
+        },
       },
-    ],
-  };
+      series: [
+        {
+          name: "Inventory Value",
+          data: topProducts.map((product) => product.inventoryValue),
+        },
+      ],
+    }),
+    [topProducts]
+  );
+
+  const formatCurrency = (value) =>
+    `₹${Number(value || 0).toLocaleString("en-IN", {
+      maximumFractionDigits: 2,
+    })}`;
+
+  if (loading) {
+    return (
+      <div className="dashboard-overview analytics-page">
+        <div className="overview-heading">
+          <div>
+            <h1>Analytics</h1>
+            <p>Loading your inventory analytics...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="dashboard-overview analytics-page">
+        <div className="overview-heading">
+          <div>
+            <h1>Analytics</h1>
+            <p>Unable to load inventory analytics.</p>
+          </div>
+        </div>
+        <p role="alert">{error}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="dashboard-overview analytics-page">
@@ -263,36 +285,34 @@ function AnalyticsPage() {
           </p>
         </div>
 
-        <span className="analytics-demo-label">
-          DEMO DATA
-        </span>
+        <span className="analytics-demo-label">LIVE DATA</span>
       </div>
 
       <div className="dashboard-stats-grid">
         <MetricCard
           title="Inventory Value"
-          value={`₹${analytics.inventoryValue.toLocaleString("en-IN")}`}
+          value={formatCurrency(summary?.inventoryValue)}
           description="Current stock value"
           icon={IndianRupee}
         />
 
         <MetricCard
           title="Total Units"
-          value={analytics.totalUnits.toLocaleString("en-IN")}
-          description={`${analytics.totalProducts} products`}
+          value={Number(summary?.totalUnits || 0).toLocaleString("en-IN")}
+          description={`${summary?.totalProducts || 0} products`}
           icon={Package}
         />
 
         <MetricCard
           title="Low Stock Products"
-          value={analytics.lowStock}
+          value={Number(summary?.lowStock || 0)}
           description="Products at reorder level"
           icon={AlertTriangle}
         />
 
         <MetricCard
           title="Out of Stock"
-          value={analytics.outOfStock}
+          value={Number(summary?.outOfStock || 0)}
           description="Products requiring attention"
           icon={XCircle}
         />

@@ -1,7 +1,12 @@
 import asyncio
 from app.services.node_api_client import (get_inventory,get_stockout_risks,get_open_purchase_orders)
 from app.services.llm_client import generate_inventory_answer
+import logging
 import time
+
+from app.services.llm_client import generate_ai_response_with_tools
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -96,12 +101,135 @@ def validate_inventory_analysis(
             )
 
 
+
 async def process_ai_question(
     question: str,
     user_id: str,
     organization_id: str,
     internal_token: str,
+    request_id: str
 ) -> dict:
+
+    start_time = time.perf_counter()
+
+    logger.info("Starting AI question processing")
+
+    prompt = f"""
+You are EnterpriseOS, an AI inventory operations assistant.
+
+Answer the user's question using the organization's actual business data.
+
+User question:
+{question}
+
+Available tools:
+- get_inventory: Current products, stock levels, reorder levels and prices.
+- get_stockout_risks: Current critical, high and medium stockout risks.
+- get_open_purchase_orders: Open purchase orders and incoming quantities.
+
+Instructions:
+1. Decide which tools are necessary to answer the question.
+2. Call only the tools relevant to the question.
+3. For questions requiring multiple data sources, call the necessary tools.
+4. Do not request the same tool repeatedly if its result is already available.
+5. Use only the data returned by the tools.
+6. Never invent product names, quantities, suppliers, prices or dates.
+7. Clearly distinguish available stock from incoming stock.
+8. If a required tool fails, explain that the information is unavailable.
+9. If the available data is insufficient, clearly state the limitation.
+10. Give a concise, practical answer.
+
+You must not assume that incoming purchase orders have already been received.
+"""
+
+    try:
+        llm_result = await generate_ai_response_with_tools(
+            prompt=prompt,
+            internal_token=internal_token,
+            request_id=request_id
+        )
+
+        tool_results = llm_result["tool_results"]
+
+        def get_successful_tool_data(tool_name: str):
+            tool_result = tool_results.get(tool_name)
+
+            if not tool_result or not tool_result.get("success"):
+                return None
+
+            response = tool_result.get("result")
+
+            if not isinstance(response, dict):
+                return None
+
+            if response.get("success") is not True:
+                return None
+
+            return response.get("data")
+
+        inventory_data = get_successful_tool_data("get_inventory")
+        stockout_data = get_successful_tool_data("get_stockout_risks")
+        purchase_order_data = get_successful_tool_data(
+            "get_open_purchase_orders"
+        )
+
+        analysis = None
+
+        # Accurate stock-gap analysis requires both current inventory
+        # and incoming quantities from open purchase orders.
+        if (
+            isinstance(inventory_data, list)
+            and isinstance(purchase_order_data, dict)
+            and isinstance(
+                purchase_order_data.get("incomingByProduct"),
+                list,
+            )
+        ):
+            analysis = analyze_inventory(
+                inventory_data,
+                purchase_order_data["incomingByProduct"],
+            )
+
+            # Cross-check Python calculations against Node's
+            # stockout calculations whenever that data is available.
+            if isinstance(stockout_data, dict):
+                validate_inventory_analysis(
+                    analysis,
+                    stockout_data,
+                )
+
+        elapsed = time.perf_counter() - start_time
+
+        logger.info(
+            "AI question processing completed",
+            extra={
+                "duration_seconds": round(elapsed, 2),
+                "retrieved_tools": list(tool_results.keys()),
+            },
+        )
+
+        return {
+            "received": True,
+            "question": question,
+            "message": "AI response generated successfully",
+            "answer": llm_result["answer"],
+            "analysis": analysis,
+            "stockoutRisks": stockout_data,
+            "purchaseOrders": purchase_order_data,
+        }
+
+    except Exception:
+        logger.exception(
+            "AI question processing failed",
+            extra={
+                "duration_seconds": round(
+                    time.perf_counter() - start_time,
+                    2,
+                ),
+            },
+        )
+        raise
+
 
     start_time = time.perf_counter()
 

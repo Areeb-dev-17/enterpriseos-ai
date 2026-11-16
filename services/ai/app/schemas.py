@@ -46,14 +46,16 @@ class StockoutRiskSummary(BaseModel):
     products: list[StockoutRiskProduct]   
 
 
+
 class AIQuestionResponse(BaseModel):
     received: bool
     question: str
     message: str
-    answer:str
-    analysis: InventoryAnalysis
-    stockoutRisks: StockoutRiskSummary
-    purchaseOrders: dict
+    answer: str
+    analysis: InventoryAnalysis | None = None
+    stockoutRisks: StockoutRiskSummary | None = None
+    purchaseOrders: dict | None = None
+
 
 
 
